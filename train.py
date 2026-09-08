@@ -76,7 +76,7 @@ def main():
     st_model_file = args.st_model_file
     dataset_json_file = args.dataset_json_file
     num_data = args.num_data
-    model_save_path = args.model_saved_path
+    model_save_path = args.model_save_path
     drop_text_rate = args.drop_text_rate
 
     resolution = args.resolution
@@ -96,9 +96,9 @@ def main():
     model_paths = [os.path.join(model_base_path, f) for f in model_files.split(',')]
     st_model_path = os.path.join(model_base_path, st_model_file)
 
-    accelerator = accelerate.Accelerator()
+    accelerator = accelerate.Accelerator(mixed_precision='fp16')
     device = accelerator.device
-    weight_dtype = torch.float16
+    weight_dtype = torch.float16 if device.type == 'cuda' else torch.float32
 
     accelerator.print(args)
 
@@ -121,6 +121,11 @@ def main():
     model.unets.requires_grad_(False)
     model.aggregators.requires_grad_(True)
 
+    model.vae.to(dtype=torch.float32)
+    model.text_encoders.to(dtype=weight_dtype)
+    model.unets.to(dtype=weight_dtype)
+    model.aggregators.to(dtype=torch.float32)
+
     dataset = get_dataset(dataset_json_file, model.tokenizer, resolution, num_data, drop_text_rate)
     dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
 
@@ -139,10 +144,11 @@ def main():
         for batch in dataloader:
             model.train()
 
-            pixel_values = batch['pixel_values'].to(device, weight_dtype)
+            pixel_values = batch['pixel_values'].to(device, torch.float32)
             input_ids = batch['input_ids'].to(device)
 
-            loss = model.train_forward(pixel_values, input_ids)
+            with accelerator.autocast():
+                loss = model.train_forward(pixel_values, input_ids)
 
             accelerator.backward(loss)
             optimizer.step()

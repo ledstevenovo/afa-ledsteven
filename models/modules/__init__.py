@@ -1,3 +1,3 @@
 from .pipeline_stable_diffusion_aggregator import StableDiffusionAggregatorPipeline
 from .unet_2d_condition_aggregator import UNet2DConditionAggregatorModel
-from .aggregator import Aggregator, MeanAggregator
+from .aggregator import Aggregator

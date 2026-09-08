@@ -1,6 +1,7 @@
 import argparse
 import math
 import time
+from pathlib import Path
 
 import accelerate
 import torch
@@ -16,7 +17,7 @@ def parse_args():
     parser.add_argument('--images_saved_path', type=str)
     parser.add_argument('--attn_maps_saved_path', type=str)
 
-    parser.add_argument('--negative_prompt', type=str, default='\'\'')
+    parser.add_argument('--negative_prompt', type=str, default='')
     parser.add_argument('--num_images_per_prompt', type=int, default=4)
     parser.add_argument('--height', type=int, default=512)
     parser.add_argument('--width', type=int, default=512)
@@ -82,8 +83,12 @@ def main():
     t = time.time() - st
     print(f'inference, process idx: {process_idx}, {t:.1f}s')
 
+    image_path = Path(images_saved_path)
     for image_idx, image in enumerate(gen_images):
-        image.save(images_saved_path)
+        output_path = image_path
+        if len(gen_images) > 1:
+            output_path = image_path.with_name(f'{image_path.stem}_{image_idx}{image_path.suffix}')
+        image.save(output_path)
     torch.save(attn_maps, attn_maps_saved_path)
 
 

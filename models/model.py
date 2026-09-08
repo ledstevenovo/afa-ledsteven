@@ -50,8 +50,11 @@ class Model(nn.Module):
         }
 
     def train_forward(self, pixel_values: torch.FloatTensor, input_ids: torch.LongTensor):
-        latents = self.vae.encode(pixel_values).latent_dist.sample()
-        latents = latents * self.vae.config.scaling_factor
+        # Keep VAE encoding in its own precision even inside the training autocast context.
+        with torch.autocast(device_type=pixel_values.device.type, enabled=False):
+            latents = self.vae.encode(pixel_values.to(dtype=self.vae.dtype)).latent_dist.sample()
+            latents = latents * self.vae.config.scaling_factor
+        latents = latents.to(dtype=self.unets[0].dtype)
 
         noise = torch.randn_like(latents)
 
@@ -70,7 +73,6 @@ class Model(nn.Module):
             encoder_hidden_states,
             additional_unets=self.unets[1:],
             aggregators=self.aggregators,
-            aggregate_from=self.aggregate_from,
         ).sample
 
         loss = func.mse_loss(noise_pred.float(), noise.float(), reduction='mean')
@@ -167,8 +169,8 @@ class Model(nn.Module):
 
         agg_in_channels = [unets[0].conv_in.out_channels]  # conv_in
         for block_idx, block in enumerate(unets[0].down_blocks):
-            num_layers = len(block.resnets) + (0 if block.downsamplers is None else 1)
-            for _ in range(num_layers):
+            num_block_layers = len(block.resnets) + (0 if block.downsamplers is None else 1)
+            for _ in range(num_block_layers):
                 agg_in_channels.append(unets[0].config.block_out_channels[block_idx])  # down_blocks
         agg_in_channels.append(unets[0].config.block_out_channels[-1])  # mid_block
         for block_idx, block in enumerate(unets[0].up_blocks):
