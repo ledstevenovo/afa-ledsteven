@@ -27,6 +27,21 @@ The core idea lies in dynamically producing an individual attention map for each
 It is worth noting that only SABW is trainable with about 50 million parameters, while other models are frozen. 
 Both the quantitative and qualitative experiments demonstrate the effectiveness of our proposed Adaptive Feature Aggregation method.
 
+## Installation and checks
+
+Use an isolated Python 3.9 environment. From the repository root, install the CUDA 12.1 PyTorch wheels first, then the pinned dependencies:
+
+```sh
+python -m pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install -r requirements.txt
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+python -m unittest discover -s tests -v
+```
+
+Training and inference require an NVIDIA GPU with a compatible driver. The CUDA availability check should print `True`; the CUDA regression test skips if no GPU is available. `requirements.txt` pins direct dependencies and selected compatibility dependencies, not every transitive package.
+
+The small-model tests were validated on Windows with an RTX 4060 Laptop GPU. Full-model training on a T4 and paper metrics remain unverified. See [tests/README.md](tests/README.md) for test coverage and limitations. Pretrained models and datasets must be supplied separately.
+
 ## Reference
 ```
 @article{wang2024ensembling,

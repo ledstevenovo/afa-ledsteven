@@ -1,0 +1,16 @@
+# Validated with Python 3.9. See README.md for CUDA 12.1 PyTorch installation.
+# Direct dependencies and compatibility pins; not a complete transitive lockfile.
+torch==2.3.0
+torchvision==0.18.0
+numpy==1.24.3
+Pillow==11.3.0
+tqdm==4.70.0
+diffusers==0.20.2
+transformers==4.33.3
+accelerate==0.23.0
+huggingface-hub==0.25.2
+datasets==2.14.7
+pyarrow==14.0.2
+safetensors==0.4.5
+xformers==0.0.26.post1
+aiohttp==3.8.6

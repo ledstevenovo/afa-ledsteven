@@ -12,10 +12,10 @@ The tests use random, small Diffusers U-Nets, a VAE, CLIP text encoders, and the
 
 ## Validation environment
 
-The compatibility environment uses Python 3.9, PyTorch 2.3.0 with CUDA 12.1, torchvision 0.18.0, NumPy 1.24.3, and Pillow 11.3.0. Install the following into an isolated environment with that PyTorch stack:
+Use Python 3.9 and install the CUDA PyTorch stack as described in the [root README](../README.md). Dependency versions are maintained in [requirements.txt](../requirements.txt). From the repository root:
 
 ```sh
-python -m pip install diffusers==0.20.2 transformers==4.33.3 accelerate==0.23.0 huggingface-hub==0.25.2 datasets==2.14.7 pyarrow==14.0.2 safetensors==0.4.5 xformers==0.0.26.post1 aiohttp==3.8.6
+python -m pip install -r requirements.txt
 ```
 
 These versions target the repository's existing Diffusers interfaces. They are not a claim that current releases are compatible. Do not replace an existing environment's packages in place.
