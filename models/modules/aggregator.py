@@ -19,6 +19,7 @@ class Aggregator(nn.Module):
             num_attn_heads: int,
             cross_attn_dim: int,
             temb_channels: int,
+            out_init_std: float = 0.0,
     ):
         super().__init__()
 
@@ -30,6 +31,7 @@ class Aggregator(nn.Module):
             'num_attn_heads': num_attn_heads,
             'cross_attn_dim': cross_attn_dim,
             'temb_channels': temb_channels,
+            'out_init_std': out_init_std,
         }
 
         self.conv_in = nn.Conv2d(in_channels=in_channels * num_experts, out_channels=hidden_size, kernel_size=1)
@@ -44,9 +46,17 @@ class Aggregator(nn.Module):
         )
         self.conv_out = nn.Conv2d(hidden_size, num_experts, kernel_size=1, bias=False)
 
-        nn.init.zeros_(self.conv_out.weight)
-        if self.conv_out.bias is not None:
+        # out_init_std > 0 starts the aggregation near (but not exactly at) the
+        # expert average. Zero init makes the attention map exactly uniform, but
+        # it also zeroes the gradient reaching conv_in/res_block/transformer
+        # (their gradient is proportional to conv_out.weight), so the decision
+        # function itself stays at its random initialisation.
+        if out_init_std > 0:
+            nn.init.normal_(self.conv_out.weight, mean=0.0, std=out_init_std)
+        else:
             nn.init.zeros_(self.conv_out.weight)
+        if self.conv_out.bias is not None:
+            nn.init.zeros_(self.conv_out.bias)
 
     def forward(
             self,

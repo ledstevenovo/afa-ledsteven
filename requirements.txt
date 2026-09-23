@@ -14,3 +14,4 @@ pyarrow==14.0.2
 safetensors==0.4.5
 xformers==0.0.26.post1
 aiohttp==3.8.6
+omegaconf

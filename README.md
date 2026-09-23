@@ -42,6 +42,31 @@ Training and inference require an NVIDIA GPU with a compatible driver. The CUDA 
 
 The small-model tests were validated on Windows with an RTX 4060 Laptop GPU. Full-model training on a T4 and paper metrics remain unverified. See [tests/README.md](tests/README.md) for test coverage and limitations. Pretrained models and datasets must be supplied separately.
 
+## Multi-expert training (paper setting) and large-GPU migration
+
+`train.py` trains an aggregator over two experts with a fixed small batch. For the paper's setting
+(5-7 realistic SD1.5 finetunes on JourneyDB, effective batch 8+) the repo now ships a screening gate,
+a training entry point and a generation-based evaluation:
+
+```sh
+# 1. screen the expert set BEFORE spending GPU time: is anything learnable? (~2 min per expert)
+python3 probe_multi_expert.py --expert /path/to/expert.safetensors --name name
+python3 analyze_multi_expert.py            # go/no-go: cross-seed router gain > ~2%
+
+# 2. train (wrappers run_paper_setting.sh / run_pro6000.sh add crash-retry with --resume)
+python3 train_paper_setting.py --model_files A,B,C --dataset_json_file records.json \
+    --batch_size 8 --grad_accum_steps 1 --cudnn on --resume --model_save_path out
+
+# 3. judge with generation metrics, not with the training loss
+python3 eval_generation.py --ckpt out --out eval_out
+```
+
+- `MIGRATION_PRO6000.md` - moving to a 96 GB card (RTX PRO 6000): environment (torch cu128 is
+  required for Blackwell), model/data sources, memory sizing, training commands, validation ladder.
+- `RESULTS_T4.md` - every measurement from the T4 stage: why the loss stays flat with two
+  correlated experts, per-expert-set learnable headroom, and the CLIPScore comparison.
+- `requirements-pro6000.txt` - dependency set validated for sm_120 (do **not** install xformers).
+
 ## Reference
 ```
 @article{wang2024ensembling,

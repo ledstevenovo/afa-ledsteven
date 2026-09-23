@@ -134,6 +134,7 @@ class Model(nn.Module):
             hidden_size: int,
             num_layers: int,
             num_attn_heads: int,
+            aggregator_out_init_std: float = 0.0,
     ):
         st_model = cls.load_sd_model(st_model_path)
 
@@ -141,12 +142,17 @@ class Model(nn.Module):
         tokenizer = st_model.tokenizer
 
         unets, text_encoders = [], []
-        for mp in model_paths:
+        for ei, mp in enumerate(model_paths):
+            print(f'  loading expert {ei + 1}/{len(model_paths)}: {os.path.basename(os.path.dirname(mp)) or ""}/'
+                  f'{os.path.basename(mp)}', flush=True)
             base_model = cls.load_sd_model(mp)
 
             unet = base_model.unet
             unet = UNet2DConditionAggregatorModel.from_unet_2d_condition_model(unet)
-            unet.enable_xformers_memory_efficient_attention()
+            try:
+                unet.enable_xformers_memory_efficient_attention()
+            except Exception:
+                pass  # xformers not available or incompatible
             unets.append(unet)
 
             text_encoders.append(base_model.text_encoder)
@@ -186,10 +192,14 @@ class Model(nn.Module):
             num_attn_heads=num_attn_heads,
             cross_attn_dim=text_encoders[0].config.hidden_size,
             temb_channels=unets[0].config.block_out_channels[0] * 4,
+            out_init_std=aggregator_out_init_std,
         ) for in_channels in agg_in_channels]
 
         for aggregator in aggregators:
-            aggregator.transformer.enable_xformers_memory_efficient_attention()
+            try:
+                aggregator.transformer.enable_xformers_memory_efficient_attention()
+            except Exception:
+                pass
 
         return cls(
             aggregators,
@@ -250,7 +260,10 @@ class Model(nn.Module):
 
         for idx in range(len(unets)):
             unets[idx] = UNet2DConditionAggregatorModel.from_unet_2d_condition_model(unets[idx]).to(device, dtype)
-            unets[idx].enable_xformers_memory_efficient_attention()
+            try:
+                unets[idx].enable_xformers_memory_efficient_attention()
+            except Exception:
+                pass
 
         aggregators = [
             Aggregator.load_pretrained(os.path.join(directory, f'aggregator_{i}')).to(device, dtype)
@@ -258,7 +271,10 @@ class Model(nn.Module):
         ]
 
         for aggregator in aggregators:
-            aggregator.transformer.enable_xformers_memory_efficient_attention()
+            try:
+                aggregator.transformer.enable_xformers_memory_efficient_attention()
+            except Exception:
+                pass
 
         train_scheduler = DDPMScheduler(
             beta_start=0.00085,

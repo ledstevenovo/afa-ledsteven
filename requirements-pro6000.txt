@@ -1,0 +1,20 @@
+# Dependencies validated on an RTX PRO 6000-class card (Blackwell, sm_120).
+#
+# torch MUST come from the cu128 index (Blackwell kernels are absent from cu121/cu124 builds):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   (torch >= 2.7; a torch 2.5.1+cu124 build has arch list up to sm_90 and fails on sm_120)
+#
+# Do NOT install xformers: PyTorch SDPA is faster on modern cards, and the code
+# falls back gracefully (models/model.py wraps xformers calls in try/except).
+#
+# Validated with Python 3.12 on the T4 box; see MIGRATION_PRO6000.md before switching cards.
+diffusers==0.21.4
+transformers==4.39.3
+accelerate==0.26.1
+huggingface-hub==0.23.5
+datasets==2.21.0
+safetensors==0.8.0
+Pillow==11.0.0
+numpy
+tqdm
+omegaconf

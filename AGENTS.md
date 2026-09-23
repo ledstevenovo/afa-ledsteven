@@ -28,6 +28,8 @@ Create output directories first. Single-image output retains the requested filen
 
 Training needs local expert models and JSON records containing `image_file` and `text`. Pass comma-separated expert names through `--model_files` and a checkpoint directory through `--model_save_path`. Training uses FP16 autocast with FP32 VAE and aggregator parameters. Validate on one GPU first.
 
+For the paper's multi-expert setting (5-7 experts, effective batch 8, step-based resume, routing monitors) use `train_paper_setting.py`, wrapped by `run_paper_setting.sh` (15 GB T4) or `run_pro6000.sh` (>= 48 GB; that wrapper enables cuDNN, which is broken in the T4 container). Two rules learned the hard way: gate long runs on the offline headroom measurement (`probe_multi_expert.py` + `analyze_multi_expert.py`; cross-seed router gain must exceed ~2%, otherwise two correlated experts give zero learnable routing and the loss is flat no matter the hyperparameters), and judge results with generation metrics (`eval_generation.py`, CLIPScore) rather than the training MSE. See `MIGRATION_PRO6000.md` and `RESULTS_T4.md`.
+
 ## Coding Style & Naming Conventions
 
 Use four-space indentation, `snake_case` functions/variables, and `PascalCase` classes. Follow nearby quoting and type-hint conventions. Preserve tensor-shape expectations and keep pretrained components frozen when changing aggregator training. No formatter or linter is configured; avoid unrelated reformatting.
