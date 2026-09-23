@@ -5,6 +5,26 @@
 
 ---
 
+## 0. 磁盘布局（AutoDL/Seetacloud：系统盘 vs 数据盘）——先做这一步
+
+云实例的系统盘通常只有 30–50GB 且扩容贵，**数据盘**（AutoDL 是 `/root/autodl-tmp`，其它平台常见 `/data`、`/hy-tmp`）才是放资产的地方。用 `df -h` 确认哪个挂载点大。
+
+```bash
+# 代码也放数据盘（用绝对路径，别用相对目录，否则落在系统盘 /root）
+git clone -b pro6000-migration <repo-url> /root/autodl-tmp/afa
+cd /root/autodl-tmp/afa
+
+# 资产与缓存一律指向数据盘；写进 ~/.bashrc 免得忘
+export AFA_ASSETS=/root/autodl-tmp/afa-assets
+export HF_HOME=/root/autodl-tmp/hf_home        # 默认在 ~/.cache/huggingface = 系统盘，下 15GB 模型会直接撑爆
+mkdir -p "$AFA_ASSETS" "$HF_HOME"
+echo 'export AFA_ASSETS=/root/autodl-tmp/afa-assets' >> ~/.bashrc
+echo 'export HF_HOME=/root/autodl-tmp/hf_home'       >> ~/.bashrc
+```
+
+已经误放系统盘的话：`mv ~/afa /root/autodl-tmp/afa`（跨盘 mv 等价复制+删除；代码只有 ~1MB，秒完）。
+本文档后续所有路径示例里的 `/data/afa-assets` 请按实际替换为 `$AFA_ASSETS`。
+
 ## 1. 环境（最容易踩的坑，务必先做）
 
 **Blackwell 显卡（sm_120）需要 CUDA 12.8+ 与 PyTorch ≥ 2.7 的 cu128 轮子。**
