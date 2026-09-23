@@ -59,7 +59,7 @@ PROMPTS = [
     ('anime', 'anime style cherry blossom schoolyard on a spring afternoon'),
 ]
 
-VARIANTS = ['rv_only', 'sd15_only', 'afa', 'rv_in_afa']
+VARIANTS = []  # filled in main(): <single names>, 'afa', 'e0_in_afa'
 STEPS, GUIDANCE, RES = 50, 7.5, 512
 
 
@@ -91,11 +91,25 @@ def generator_for(seed):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=f'{ASSETS}/output/eval_gen')
-    ap.add_argument('--phases', default=','.join(VARIANTS))
+    ap.add_argument('--phases', default=None, help='subset of variants; default = all')
     ap.add_argument('--clip', default=CLIP_PATH)
     ap.add_argument('--ckpt', default=CKPT, help='aggregator checkpoint dir to evaluate')
+    ap.add_argument('--model_files', default=f'{RV},{ASSETS}/models/sd15_expert_2.safetensors',
+                    help='comma-separated expert list, must match the trained aggregator order')
+    ap.add_argument('--singles', default=f'rv_only={RV},sd15_only={SD15}',
+                    help='name=path list of standalone pipelines for the baselines')
+    ap.add_argument('--max_prompts', type=int, default=0, help='use only the first N prompts')
+    ap.add_argument('--swap_experts', default='', help='i,j: swap conv_out channels i and j after loading the '
+                    'aggregator -- counterfactual "same routing policy, other expert preferred"')
     args = ap.parse_args()
-    phases = args.phases.split(',')
+    phases = args.phases.split(',') if args.phases else None
+    global VARIANTS, PROMPTS
+    singles = dict(x.split('=', 1) for x in args.singles.split(',') if x)
+    VARIANTS = list(singles) + ['afa', 'e0_in_afa']
+    if args.max_prompts:
+        PROMPTS = PROMPTS[:args.max_prompts]
+    if phases is None:
+        phases = VARIANTS
     os.makedirs(args.out, exist_ok=True)
     device = torch.device('cuda')
     print(f'start {time.strftime("%Y-%m-%d %H:%M:%S")} phases={phases}', flush=True)
@@ -104,11 +118,16 @@ def main():
     routing = {}
 
     # ---------- phase 1/2: single experts, their own pipelines ----------
-    for variant, loader in [('rv_only', lambda: StableDiffusionPipeline.from_single_file(
-                                RV, torch_dtype=torch.float16, safety_checker=None,
-                                load_safety_checker=False)),
-                            ('sd15_only', lambda: StableDiffusionPipeline.from_pretrained(
-                                SD15, torch_dtype=torch.float16, safety_checker=None))]:
+    def _loader(path):
+        if os.path.isdir(path):
+            return lambda: StableDiffusionPipeline.from_pretrained(path, torch_dtype=torch.float16,
+                                                                   safety_checker=None)
+        return lambda: StableDiffusionPipeline.from_single_file(path, torch_dtype=torch.float16,
+                                                                safety_checker=None,
+                                                                load_safety_checker=False)
+
+    for variant in [v for v in singles if v in phases]:
+        loader = _loader(singles[variant])
         if variant not in phases:
             continue
         t0 = time.time()
@@ -129,8 +148,7 @@ def main():
     # ---------- phase 3/4: the AFA model ----------
     if 'afa' in phases or 'rv_in_afa' in phases:
         t0 = time.time()
-        model = Model.load_init(model_paths=[RV, f'{ASSETS}/models/sd15_expert_2.safetensors'],
-                                st_model_path=SD15, hidden_size=128, num_layers=1, num_attn_heads=8)
+        model = Model.load_init(model_paths=args.model_files.split(','), st_model_path=SD15, hidden_size=128, num_layers=1, num_attn_heads=8)
         # Inference path: everything fp16, matching Model.load_pretrained(..., dtype=fp16).
         # (Training keeps the VAE fp32 because autocast handles the aggregator/UNet dtypes;
         # here there is no autocast, so a mixed fp32-params/fp16-input graph would error.)
@@ -145,6 +163,12 @@ def main():
             f'{args.ckpt}/train_meta.json') else json.load(open(f'{args.ckpt}/checkpoint_meta.json'))
         for i, agg in enumerate(model.aggregators):
             agg.load_state_dict(Aggregator.load_pretrained(f'{args.ckpt}/aggregator_{i}').state_dict())
+        if args.swap_experts:
+            a, b = [int(x) for x in args.swap_experts.split(',')]
+            for agg in model.aggregators:
+                w = agg.conv_out.weight.data
+                w[[a, b]] = w[[b, a]]
+            print(f'[afa] swapped conv_out channels {a}<->{b} (routing preference flipped)', flush=True)
         print(f'[afa] model + epoch-{meta["epoch"]} aggregators loaded in {time.time() - t0:.0f}s',
               flush=True)
 
@@ -155,7 +179,7 @@ def main():
                                device=features.device)
             return features[:, 0], attn
 
-        for variant in [v for v in ('afa', 'rv_in_afa') if v in phases]:
+        for variant in [v for v in ('afa', 'e0_in_afa') if v in phases]:
             Aggregator.forward = _orig if variant == 'afa' else pick_expert0
             vdir = os.path.join(args.out, variant)
             os.makedirs(vdir, exist_ok=True)
@@ -248,10 +272,10 @@ def main():
         print(f'\n{"MEAN":<52} ' + ' '.join(
             f'{np.mean([scores[(v, i)] for i in range(len(PROMPTS)) if (v, i) in scores]):>10.2f}'
             for v in VARIANTS), flush=True)
-        if ('afa', 0) in scores and ('rv_in_afa', 0) in scores:
-            d = [scores[('afa', i)] - scores[('rv_in_afa', i)] for i in range(len(PROMPTS))
-                 if ('afa', i) in scores and ('rv_in_afa', i) in scores]
-            print(f'afa - rv_in_afa (same VAE/text-encoder, isolates the aggregator): '
+        if ('afa', 0) in scores and ('e0_in_afa', 0) in scores:
+            d = [scores[('afa', i)] - scores[('e0_in_afa', i)] for i in range(len(PROMPTS))
+                 if ('afa', i) in scores and ('e0_in_afa', i) in scores]
+            print(f'afa - e0_in_afa (same model/VAE/text-encoder, isolates the aggregator): '
                   f'mean={np.mean(d):+.2f}  win/tie/loss='
                   f'{sum(1 for x in d if x > 0.1)}/{sum(1 for x in d if abs(x) <= 0.1)}/'
                   f'{sum(1 for x in d if x < -0.1)}', flush=True)
