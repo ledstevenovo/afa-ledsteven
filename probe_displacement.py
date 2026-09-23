@@ -9,6 +9,7 @@ consistent, so 20 steps at lr 1e-4 is ~2e-3 absolute -- about 9% of conv_in's
 0.0228 RMS. Much less than that means the group is gradient-starved.
 """
 import json
+import os
 import sys
 import time
 
@@ -21,11 +22,11 @@ import torchvision.transforms as transforms
 from datasets import load_dataset
 from diffusers.optimization import get_scheduler
 
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 
 torch.backends.cudnn.enabled = False
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
 DATASET_JSON = f'{ASSETS}/data/coco_captions_data.json'
 RES, BATCH, ACCUM, STEPS = 512, 2, 4, 20
 GROUPS = {

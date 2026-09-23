@@ -13,6 +13,7 @@ at ~0.5, the oracle is pure noise and unreachable.
 Read-only, ~1 minute of GPU after model load.
 """
 import json
+import os
 import sys
 import time
 
@@ -20,12 +21,12 @@ import PIL.Image as Image
 import torch
 import torchvision.transforms as transforms
 
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 from models.modules.aggregator import Aggregator  # noqa: E402
 
 torch.backends.cudnn.enabled = False
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
 RES, TIMESTEP, N_IMGS, N_NOISE = 512, 500, 4, 3
 import argparse
 _ap = argparse.ArgumentParser()

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Quick status of the AFA paper-setting run (safe to run from a phone via ssh).
-ASSETS=/root/bayes-tmp/afa-assets
+ASSETS="${AFA_ASSETS:-$(dirname "$(cd "$(dirname "$0")" && pwd)")/afa-assets}"
 LOG=$(ls -t $ASSETS/logs/paper_run_*.log 2>/dev/null | head -1)
 echo "=== AFA paper-setting run ==="
 echo "time: $(date '+%F %T')"
@@ -27,4 +27,4 @@ PY
 fi
 echo
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader
-df -h /root/bayes-tmp | tail -1
+df -h "$ASSETS" | tail -1

@@ -11,6 +11,7 @@ Baseline (before xformers, cudnn disabled): 11.0 GB peak, 1.91 s/step, 22.3 min/
 """
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -23,10 +24,10 @@ import torchvision.transforms as transforms
 from datasets import load_dataset
 from diffusers.optimization import get_scheduler
 
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
 DATASET = f'{ASSETS}/data/journeydb_data.json'
 RES = 512
 

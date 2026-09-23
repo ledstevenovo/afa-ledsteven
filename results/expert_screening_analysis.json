@@ -1,0 +1,20 @@
+{
+ "names": [
+  "sd15_big",
+  "epicrealism_big",
+  "majicmix_v6_big",
+  "rv_big"
+ ],
+ "per_expert": {
+  "sd15_big": 0.101566609373549,
+  "epicrealism_big": 0.11339889699916562,
+  "majicmix_v6_big": 0.1070311474096444,
+  "rv_big": 0.10517125807301556
+ },
+ "mean_of_preds": 0.1042711042941341,
+ "oracle_per_sample": 0.10156300622555944,
+ "oracle_per_element": 0.07962537051450151,
+ "cross_seed_router": 0.09617175423773006,
+ "agreement_observed": 0.400872802734375,
+ "agreement_independent": 0.27193652217586833
+}

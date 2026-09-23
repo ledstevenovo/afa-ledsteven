@@ -27,12 +27,12 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 from models.modules.aggregator import Aggregator  # noqa: E402
 
 torch.backends.cudnn.enabled = False
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
 RES, BATCH, TIMESTEPS = 512, 2, [300, 500, 700, 900]
 
 _tf = transforms.Compose([

@@ -1,0 +1,20 @@
+{
+ "clip_t": {
+  "only_epicrealism": 25.22002081155777,
+  "only_majicmix_v6": 25.732603644281625,
+  "only_realistic_vision_v5_1": 25.191047701239587,
+  "afa": 26.082873969376088
+ },
+ "clip_i": {
+  "only_epicrealism": 0.6681973112106323,
+  "only_majicmix_v6": 0.6800773273229599,
+  "only_realistic_vision_v5_1": 0.6937137942910194,
+  "afa": 0.699904910081625
+ },
+ "fid": {
+  "only_epicrealism": 45.25,
+  "only_majicmix_v6": 31.36,
+  "only_realistic_vision_v5_1": 28.96,
+  "afa": 29.82
+ }
+}

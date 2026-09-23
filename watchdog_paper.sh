@@ -4,8 +4,10 @@
 # Restarts the wrapper (which itself resumes from the last step checkpoint)
 # if both the wrapper and the python process are gone before ~09:05.
 DEADLINE=$(date -d "today 09:05" +%s); [ "$(date +%H%M)" -ge "0905" ] && DEADLINE=$(date -d "tomorrow 09:05" +%s)
-cd /root/bayes-tmp/afa || exit 1
-LOG=/root/bayes-tmp/afa-assets/logs/watchdog.log
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE" || exit 1
+ASSETS="${AFA_ASSETS:-$(dirname "$HERE")/afa-assets}"
+LOG="$ASSETS/logs/watchdog.log"
 mkdir -p "$(dirname "$LOG")"
 echo "[$(date '+%F %T')] watchdog started (pid $$), deadline $(date -d @$DEADLINE '+%F %T')" >> "$LOG"
 
@@ -21,9 +23,9 @@ while true; do
     else
         echo "[$(date '+%F %T')] RUN NOT FOUND -> restarting wrapper" >> "$LOG"
         if tmux has-session -t afa_run 2>/dev/null; then
-            tmux send-keys -t afa_run 'cd /root/bayes-tmp/afa && bash run_paper_setting.sh' Enter
+            tmux send-keys -t afa_run "cd $HERE && bash run_paper_setting.sh" Enter
         else
-            tmux new-session -d -s afa_run -c /root/bayes-tmp/afa "bash run_paper_setting.sh"
+            tmux new-session -d -s afa_run -c "$HERE" "bash run_paper_setting.sh"
         fi
         sleep 60
     fi

@@ -1,0 +1,23 @@
+{
+ "clip_t": {
+  "only_epicrealism": 26.71000045724213,
+  "only_majicmix_v6": 26.431338764727116,
+  "only_realistic_vision_v5_1": 27.695202715694904,
+  "afa": 27.864934815093875,
+  "epicrealism_in_afa": 27.71890315413475
+ },
+ "aes": {
+  "only_epicrealism": 5.369288701415062,
+  "only_majicmix_v6": 5.596483892202377,
+  "only_realistic_vision_v5_1": 5.447176525592804,
+  "afa": 5.5348875647783276,
+  "epicrealism_in_afa": 5.524812064766884
+ },
+ "ir": {
+  "only_epicrealism": 0.12963241608638781,
+  "only_majicmix_v6": 0.1859177635970991,
+  "only_realistic_vision_v5_1": 0.3486303263080481,
+  "afa": 0.45558901292155496,
+  "epicrealism_in_afa": 0.3699013370663306
+ }
+}

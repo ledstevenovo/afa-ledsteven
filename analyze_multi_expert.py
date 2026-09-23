@@ -23,14 +23,14 @@ import sys
 
 import torch
 
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
 PRED_DIR = f'{ASSETS}/output/expert_preds'
 ORDER = ['sd15', 'rv', 'absolute_reality', 'majicmix_v6', 'epicrealism', 'ghibli', 'counterfeit']
 
 
-def load_all():
+def load_all(pred_dir):
     data = {}
-    for f in sorted(glob.glob(os.path.join(PRED_DIR, '*.pt'))):
+    for f in sorted(glob.glob(os.path.join(pred_dir, '*.pt'))):
         name = os.path.basename(f)[:-3]
         d = torch.load(f, map_location='cpu')
         data[name] = {(c['img'], c['t'], c['seed']): (c['pred'].float(), c['noise'].float())
@@ -43,9 +43,10 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--experts', default='', help='comma-separated subset')
+    ap.add_argument('--pred_dir', default=PRED_DIR, help='directory of probe_multi_expert.py outputs')
     args = ap.parse_args()
-    os.makedirs(PRED_DIR, exist_ok=True)
-    data = load_all()
+    os.makedirs(args.pred_dir, exist_ok=True)
+    data = load_all(args.pred_dir)
     names = [n for n in ORDER if n in data] + [n for n in data if n not in ORDER]
     if args.experts:
         want = args.experts.split(',')
@@ -132,7 +133,7 @@ def main():
                    mean_of_preds=avg(mean_pred), oracle_per_sample=avg(oracle_samp),
                    oracle_per_element=avg(oracle_elem), cross_seed_router=avg(router_mse),
                    agreement_observed=avg(agree_obs), agreement_independent=avg(agree_indep)),
-              open(f'{PRED_DIR}/analysis.json', 'w'), indent=1)
+              open(f'{args.pred_dir}/analysis.json', 'w'), indent=1)
 
 
 if __name__ == '__main__':

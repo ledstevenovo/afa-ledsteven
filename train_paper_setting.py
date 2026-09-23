@@ -23,6 +23,7 @@ import faulthandler
 import signal
 
 import PIL.Image as Image
+import PIL.ImageFile as ImageFile
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -31,15 +32,28 @@ import torchvision.transforms as transforms
 from datasets import load_dataset
 from diffusers.optimization import get_scheduler
 
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 from models.modules.aggregator import Aggregator  # noqa: E402
 
-# cuDNN is broken in *this* container (verified 3 ways); normal machines leave it on.
+# --cudnn on/off decides the real setting; off is only the workaround for the
+# T4 container's broken cuDNN (which this machine does not have).
 torch.backends.cudnn.enabled = True
 faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1 PID dumps the stack
 
-ASSETS = '/root/bayes-tmp/afa-assets'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
+
+# JourneyDB contains a small number of truncated JPEGs; without this a single bad file
+# kills a DataLoader worker and aborts the run (observed at step ~270 of run 1).
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+def load_image(path, resolution=512):
+    try:
+        return Image.open(path).convert('RGB')
+    except Exception as exc:  # unreadable file: keep the batch shape, drop the content
+        print(f'  WARNING: unreadable image {path}: {type(exc).__name__}: {exc}', flush=True)
+        return Image.new('RGB', (resolution, resolution))
 
 
 def parse_args():
@@ -106,7 +120,7 @@ def get_dataset(path, tokenizer, resolution, drop_text_rate=0.1):
     ds = load_dataset('json', data_files=path, split='train').select_columns(['image_file', 'text'])
 
     def transform(batch):
-        imgs = [Image.open(f).convert('RGB') for f in batch['image_file']]
+        imgs = [load_image(f, resolution) for f in batch['image_file']]
         text = [''] * len(batch['text']) if torch.rand(1).item() < drop_text_rate else batch['text']
         return {'pixel_values': torch.stack([tf(im) for im in imgs], dim=0),
                 'input_ids': tokenizer(text, padding='max_length', truncation=True,
@@ -151,7 +165,19 @@ def load_ckpt(model, path):
         return 0, 0, []
     meta = json.load(open(meta_path))
     for i, agg in enumerate(model.aggregators):
-        agg.load_state_dict(Aggregator.load_pretrained(os.path.join(path, f'aggregator_{i}')).state_dict())
+        saved = Aggregator.load_pretrained(os.path.join(path, f'aggregator_{i}'))
+        # Resuming with a different architecture fails inside load_state_dict with a bare
+        # size error; say which flags actually match the checkpoint instead.
+        for key, flag in (('num_layers', '--aggregator_num_layers'),
+                          ('hidden_size', '--aggregator_hidden_size'),
+                          ('num_attn_heads', '--aggregator_num_attn_heads'),
+                          ('num_experts', '--model_files')):
+            if saved.config.get(key) != agg.config.get(key):
+                raise SystemExit(
+                    f'checkpoint aggregator_{i} has {key}={saved.config.get(key)} but this run is '
+                    f'configured with {key}={agg.config.get(key)}; restart with the checkpoint value '
+                    f'({flag} {saved.config.get(key)})')
+        agg.load_state_dict(saved.state_dict())
     print(f'resumed from step {meta["step"]} (epoch {meta["epoch"]})')
     return meta['step'], meta['epoch'], meta.get('history', [])
 
@@ -180,7 +206,7 @@ def main():
     model.text_encoders.to(device, torch.float16)
     model.unets.to(device, torch.float16)
     model.aggregators.to(device, torch.float32)
-    # xformers is slower than PyTorch SDPA on this T4 (measured: 2.55 vs 2.03 s/step)
+    # xformers is slower than PyTorch SDPA here and is not installed; disable it.
     for u in model.unets:
         try:
             u.disable_xformers_memory_efficient_attention()
@@ -215,7 +241,7 @@ def main():
         transforms.Normalize([0.5], [0.5]),
     ])
     torch.manual_seed(0)
-    ev_px = torch.stack([tf(Image.open(r['image_file']).convert('RGB')) for r in recs]).to(device, torch.float32)
+    ev_px = torch.stack([tf(load_image(r['image_file'], args.resolution)) for r in recs]).to(device, torch.float32)
     with torch.autocast(device_type='cuda', enabled=False):
         ev_lat = (model.vae.encode(ev_px.to(model.vae.dtype)).latent_dist.sample()
                   * model.vae.config.scaling_factor).to(torch.float16)

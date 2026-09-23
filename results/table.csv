@@ -1,0 +1,10 @@
+model,fid,is,clip_i,clip_t,aes,pick,hps,ir
+Base Model A (epicrealism),45.2500,,0.6682,26.7100,5.3693,,,0.1296
+Base Model B (majicmix_v6),31.3600,,0.6801,26.4313,5.5965,,,0.1859
+Base Model C (realistic_vision_v5_1),28.9600,,0.6937,27.6952,5.4472,,,0.3486
+Weighted Merging,,,,,,,,
+MBW,,,,,,,,
+autoMBW,,,,,,,,
+MagicFusion,,,,,,,,
+AFA (Ours),29.8200,,0.6999,27.8649,5.5349,,,0.4556
+epicrealism in AFA (expert-0 only),,,,27.7189,5.5248,,,0.3699

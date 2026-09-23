@@ -3,9 +3,10 @@
 # Auto-restarts on crash with --resume (step-based checkpoints), stops for good
 # at the time limit inside the python script (exit 0) or after MAX_RETRIES.
 set -o pipefail
-cd /root/bayes-tmp/afa
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
 
-ASSETS=/root/bayes-tmp/afa-assets
+ASSETS="${AFA_ASSETS:-$(dirname "$HERE")/afa-assets}"
 EXPERTS="$ASSETS/models/stable-diffusion-v1-5,\
 $ASSETS/models/realistic_vision_v5.1/Realistic_Vision_V5.1.safetensors,\
 $ASSETS/models/_new_experts/epicrealism.safetensors"
@@ -13,7 +14,14 @@ SAVE="$ASSETS/output/paper_run"
 LOG="$ASSETS/logs/paper_run_$(date +%Y%m%d).log"
 MAX_RETRIES=5
 
-export PYTHONUNBUFFERED=1 TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 HF_ENDPOINT=https://hf-mirror.com
+# No HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE: from_single_file pulls the CLIP text
+# encoder *config* from the hub id openai/clip-vit-large-patch14, so offline mode
+# breaks loading .safetensors experts (ValueError/OSError on the first load).
+# Prefer the repo venv: the pinned dependency set lives there, not in the base env.
+PY="$HERE/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
+
+export PYTHONUNBUFFERED=1 HF_ENDPOINT=https://hf-mirror.com
 mkdir -p "$SAVE" "$(dirname "$LOG")"
 
 echo "===== AFA paper-setting run $(date '+%F %T') ====="
@@ -24,8 +32,9 @@ echo "checkpoints: $SAVE | log: $LOG"
 RETRY=0
 while true; do
     RETRY=$((RETRY + 1))
-    python3 -u train_paper_setting.py \
+    "$PY" -u train_paper_setting.py \
         --model_files "$EXPERTS" \
+        --st_model_file "$ASSETS/models/stable-diffusion-v1-5" \
         --model_save_path "$SAVE" \
         --dataset_json_file "$ASSETS/data/journeydb_data.json" \
         --resolution 512 \
@@ -38,8 +47,9 @@ while true; do
         --save_every_steps 500 \
         --log_every_steps 10 \
         --eval_every_steps 50 \
-        --stop_hour 9 \
-        --stop_minute 0 \
+        --stop_hour "${STOP_HOUR:-9}" \
+        --stop_minute "${STOP_MINUTE:-0}" \
+        --cudnn "${CUDNN:-off}" \
         --resume \
         2>&1 | tee -a "$LOG"
     CODE=${PIPESTATUS[0]}

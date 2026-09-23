@@ -115,14 +115,20 @@ class Model(nn.Module):
         )
 
     @staticmethod
-    def load_sd_model(model_path: str):
+    def load_sd_model(model_path: str, torch_dtype=None, original_config_file=None):
         if not os.path.exists(model_path):
             return None
 
+        kwargs = {} if torch_dtype is None else {'torch_dtype': torch_dtype}
         if os.path.isdir(model_path):
-            model = StableDiffusionPipeline.from_pretrained(model_path, safety_checker=None)
+            model = StableDiffusionPipeline.from_pretrained(model_path, safety_checker=None, **kwargs)
         else:
-            model = StableDiffusionPipeline.from_single_file(model_path, load_safety_checker=False)
+            # Single-file checkpoints have no embedded diffusers config, so diffusers falls
+            # back to fetching v1-inference.yaml from raw.githubusercontent.com -- which is
+            # unreachable here. Hand it the config from the local SD1.5 directory instead.
+            if original_config_file and os.path.exists(original_config_file):
+                kwargs['original_config_file'] = original_config_file
+            model = StableDiffusionPipeline.from_single_file(model_path, load_safety_checker=False, **kwargs)
 
         return model
 
@@ -137,6 +143,7 @@ class Model(nn.Module):
             aggregator_out_init_std: float = 0.0,
     ):
         st_model = cls.load_sd_model(st_model_path)
+        sd15_config = os.path.join(st_model_path, 'v1-inference.yaml')
 
         vae = st_model.vae
         tokenizer = st_model.tokenizer
@@ -145,7 +152,7 @@ class Model(nn.Module):
         for ei, mp in enumerate(model_paths):
             print(f'  loading expert {ei + 1}/{len(model_paths)}: {os.path.basename(os.path.dirname(mp)) or ""}/'
                   f'{os.path.basename(mp)}', flush=True)
-            base_model = cls.load_sd_model(mp)
+            base_model = cls.load_sd_model(mp, original_config_file=sd15_config)
 
             unet = base_model.unet
             unet = UNet2DConditionAggregatorModel.from_unet_2d_condition_model(unet)

@@ -1,45 +1,46 @@
-"""Generation-quality evaluation of the trained AFA aggregator (plan A).
+"""Generation-quality evaluation of the trained AFA aggregator.
 
-Quantitative + qualitative comparison of four generation variants on a fixed
-prompt set with identical initial noise per prompt:
+Quantitative + qualitative comparison on a fixed prompt set with identical initial
+noise per prompt. The variants follow --model_files (the same comma-separated expert
+list, in the same order, that training used):
 
-  rv_only   Realistic Vision V5.1 alone           (its own VAE + text encoder)
-  sd15_only base SD 1.5 alone                     (the second expert, alone)
-  afa       the epoch-43 trained aggregator        (Model.test_forward)
-  rv_in_afa Realistic Vision inside the AFA model  (expert-0 features only:
-            isolates the aggregator's effect from VAE/text-encoder differences)
+  only_<expert>   one expert alone, its own pipeline (per-framework baseline)
+  afa             the trained aggregator (Model.test_forward)
+  <expert0>_in_afa  expert 0's features only inside the AFA framework: isolates the
+                  aggregator's effect from VAE/text-encoder differences. "expert 0"
+                  is the first entry of --model_files, exactly as in training.
 
 Metrics
   * CLIPScore (CLIP ViT-L/14 image-text cosine x100) per image, paired per prompt
   * routing statistics for the AFA variant: per-aggregator mean attention weight
     of expert 0 and mean |attn - 0.5|, averaged over the denoising trajectory
-  * PNGs + per-prompt 4-way comparison grids for visual inspection
+  * PNGs + per-prompt comparison grids for visual inspection
 
-Runs phases sequentially and frees memory between them (15.4 GB T4).
+Runs phases sequentially and frees memory between them.
 """
 import argparse
 import gc
 import json
 import os
 import re
+import sys
 import time
 
 import numpy as np
 import torch
-from diffusers import StableDiffusionPipeline
 from PIL import Image, ImageDraw
 
-import sys
-sys.path.insert(0, '/root/bayes-tmp/afa')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import Model  # noqa: E402
 from models.modules.aggregator import Aggregator  # noqa: E402
 
-torch.backends.cudnn.enabled = False  # same workaround as training on this box
-
-ASSETS = '/root/bayes-tmp/afa-assets'
-CKPT = f'{ASSETS}/output/overnight_run'
-RV = f'{ASSETS}/models/realistic_vision_v5.1/Realistic_Vision_V5.1.safetensors'
+ASSETS = os.environ.get('AFA_ASSETS', '/data/afa-assets')
+CKPT = f'{ASSETS}/output/paper_run'
 SD15 = f'{ASSETS}/models/stable-diffusion-v1-5'
+# The paper's Group I (Sec. 4.1), in the order used for training below.
+PAPER_GROUP1 = f'{ASSETS}/models/_new_experts/epicrealism.safetensors,' \
+               f'{ASSETS}/models/_new_experts/majicmix_v6.safetensors,' \
+               f'{ASSETS}/models/realistic_vision_v5.1/Realistic_Vision_V5.1.safetensors'
 CLIP_PATH = f'{ASSETS}/models/clip-vit-large-patch14'
 
 PROMPTS = [
@@ -59,12 +60,19 @@ PROMPTS = [
     ('anime', 'anime style cherry blossom schoolyard on a spring afternoon'),
 ]
 
-VARIANTS = []  # filled in main(): <single names>, 'afa', 'e0_in_afa'
 STEPS, GUIDANCE, RES = 50, 7.5, 512
 
 
 def slug(t):
     return re.sub(r'[^a-z0-9]+', '_', t.lower())[:48]
+
+
+def expert_tag(path):
+    """Filesystem-safe short name for one expert path; used as the variant name."""
+    stem = os.path.basename(path.rstrip('/'))
+    if stem.endswith('.safetensors'):
+        stem = stem[: -len('.safetensors')]
+    return re.sub(r'[^a-z0-9]+', '_', stem.lower()).strip('_')
 
 
 def free(obj):
@@ -91,47 +99,61 @@ def generator_for(seed):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=f'{ASSETS}/output/eval_gen')
-    ap.add_argument('--phases', default=None, help='subset of variants; default = all')
+    ap.add_argument('--phases', default='all', help="'all', or a comma-separated subset of the variants")
     ap.add_argument('--clip', default=CLIP_PATH)
     ap.add_argument('--ckpt', default=CKPT, help='aggregator checkpoint dir to evaluate')
-    ap.add_argument('--model_files', default=f'{RV},{ASSETS}/models/sd15_expert_2.safetensors',
-                    help='comma-separated expert list, must match the trained aggregator order')
-    ap.add_argument('--singles', default=f'rv_only={RV},sd15_only={SD15}',
-                    help='name=path list of standalone pipelines for the baselines')
+    ap.add_argument('--model_files', default=PAPER_GROUP1,
+                    help='comma-separated expert paths, in the SAME order training used')
+    ap.add_argument('--st_model_file', default=SD15, help='SD1.5 dir: shared VAE/tokenizer/scheduler')
+    ap.add_argument('--aggregator_hidden_size', type=int, default=None,
+                    help='default: read from {ckpt}/aggregator_0/config.json')
+    ap.add_argument('--aggregator_num_layers', type=int, default=None,
+                    help='default: read from {ckpt}/aggregator_0/config.json')
+    ap.add_argument('--aggregator_num_attn_heads', type=int, default=None,
+                    help='default: read from {ckpt}/aggregator_0/config.json')
+    ap.add_argument('--cudnn', choices=['on', 'off'], default='on',
+                    help='off = T4-container workaround (broken cuDNN), on = normal GPUs')
     ap.add_argument('--max_prompts', type=int, default=0, help='use only the first N prompts')
     ap.add_argument('--swap_experts', default='', help='i,j: swap conv_out channels i and j after loading the '
                     'aggregator -- counterfactual "same routing policy, other expert preferred"')
     args = ap.parse_args()
-    phases = args.phases.split(',') if args.phases else None
-    global VARIANTS, PROMPTS
-    singles = dict(x.split('=', 1) for x in args.singles.split(',') if x)
-    VARIANTS = list(singles) + ['afa', 'e0_in_afa']
+    torch.backends.cudnn.enabled = (args.cudnn == 'on')
+
+    experts = [p for p in args.model_files.split(',') if p]
+    tags = [expert_tag(p) for p in experts]
+    expert0_variant = f'{tags[0]}_in_afa'
+    variants = [f'only_{t}' for t in tags] + ['afa', expert0_variant]
+    phases = variants if args.phases == 'all' else [p for p in args.phases.split(',') if p in variants]
     if args.max_prompts:
+        global PROMPTS
         PROMPTS = PROMPTS[:args.max_prompts]
-    if phases is None:
-        phases = VARIANTS
     os.makedirs(args.out, exist_ok=True)
     device = torch.device('cuda')
-    print(f'start {time.strftime("%Y-%m-%d %H:%M:%S")} phases={phases}', flush=True)
+    print(f'start {time.strftime("%Y-%m-%d %H:%M:%S")} | cudnn={args.cudnn} | {RES}px | '
+          f'{STEPS} steps | guidance {GUIDANCE}', flush=True)
+    for tag, path in zip(tags, experts):
+        print(f'  expert {tag}: {path}', flush=True)
+    print(f'variants: {", ".join(variants)}\nphases: {", ".join(phases)}', flush=True)
 
     scores = {}   # (variant, i) -> clipscore
     routing = {}
 
-    # ---------- phase 1/2: single experts, their own pipelines ----------
-    def _loader(path):
-        if os.path.isdir(path):
-            return lambda: StableDiffusionPipeline.from_pretrained(path, torch_dtype=torch.float16,
-                                                                   safety_checker=None)
-        return lambda: StableDiffusionPipeline.from_single_file(path, torch_dtype=torch.float16,
-                                                                safety_checker=None,
-                                                                load_safety_checker=False)
-
-    for variant in [v for v in singles if v in phases]:
-        loader = _loader(singles[variant])
+    # ---------- single experts, each in its own pipeline ----------
+    for tag, path in zip(tags, experts):
+        variant = f'only_{tag}'
         if variant not in phases:
             continue
         t0 = time.time()
-        pipe = loader().to(device)
+        # original_config_file: single-file checkpoints carry no diffusers config, so without
+        # this diffusers fetches v1-inference.yaml from raw.githubusercontent.com -- which is
+        # unreachable here and hangs on connect instead of failing fast.
+        yaml = os.path.join(args.st_model_file, 'v1-inference.yaml')
+        pipe = Model.load_sd_model(path, torch_dtype=torch.float16,
+                                   original_config_file=yaml if os.path.exists(yaml) else None)
+        if pipe is None:
+            print(f'[{variant}] {path} not found, skipping', flush=True)
+            continue
+        pipe = pipe.to(device)
         pipe.set_progress_bar_config(disable=False)
         vdir = os.path.join(args.out, variant)
         os.makedirs(vdir, exist_ok=True)
@@ -139,16 +161,51 @@ def main():
         for i, (kind, prompt) in enumerate(PROMPTS):
             p = os.path.join(vdir, f'{i:02d}_{kind}_{slug(prompt)}.png')
             if not os.path.exists(p):
-                out = pipe(prompt, height=RES, width=RES, num_inference_steps=STEPS,
-                           guidance_scale=GUIDANCE, generator=generator_for(1000 + i)).images[0]
+                with torch.no_grad():
+                    out = pipe(prompt, height=RES, width=RES, num_inference_steps=STEPS,
+                               guidance_scale=GUIDANCE, generator=generator_for(1000 + i)).images[0]
                 out.save(p)
             print(f'[{variant}] {i + 1}/{len(PROMPTS)} {p}', flush=True)
         free(pipe)
 
-    # ---------- phase 3/4: the AFA model ----------
-    if 'afa' in phases or 'rv_in_afa' in phases:
+    # ---------- the AFA model ----------
+    if 'afa' in phases or expert0_variant in phases:
+        missing = [p for p in experts if not os.path.exists(p)]
+        if missing:
+            print(f'experts missing on disk: {missing}', flush=True)
+            return
+        # The saved aggregator config is authoritative: building the model with different
+        # flags only fails later, as a state_dict size error, after the whole training run.
+        agg_cfg_path = os.path.join(args.ckpt, 'aggregator_0', 'config.json')
+        if os.path.exists(agg_cfg_path):
+            with open(agg_cfg_path) as fh:
+                agg_cfg = json.load(fh)
+            for key, argname in (('hidden_size', 'aggregator_hidden_size'),
+                                 ('num_layers', 'aggregator_num_layers'),
+                                 ('num_attn_heads', 'aggregator_num_attn_heads')):
+                given = getattr(args, argname)
+                saved = agg_cfg.get(key)
+                if given is not None and saved is not None and given != saved:
+                    print(f'WARNING: --{argname}={given} but the checkpoint was trained with '
+                          f'{key}={saved}; using the checkpoint value', flush=True)
+                setattr(args, argname, saved if saved is not None else given)
+            n_saved = agg_cfg.get('num_experts')
+            if n_saved is not None and n_saved != len(experts):
+                print(f'ERROR: the checkpoint was trained with {n_saved} experts but '
+                      f'--model_files lists {len(experts)} ({", ".join(tags)})', flush=True)
+                return
+            print(f'aggregator architecture from {agg_cfg_path}: hidden={args.aggregator_hidden_size} '
+                  f'layers={args.aggregator_num_layers} heads={args.aggregator_num_attn_heads} '
+                  f'experts={n_saved}', flush=True)
+        else:
+            print(f'no {agg_cfg_path}: falling back to --aggregator_* flags '
+                  f'(hidden={args.aggregator_hidden_size} layers={args.aggregator_num_layers} '
+                  f'heads={args.aggregator_num_attn_heads})', flush=True)
         t0 = time.time()
-        model = Model.load_init(model_paths=args.model_files.split(','), st_model_path=SD15, hidden_size=128, num_layers=1, num_attn_heads=8)
+        model = Model.load_init(model_paths=experts, st_model_path=args.st_model_file,
+                                hidden_size=args.aggregator_hidden_size,
+                                num_layers=args.aggregator_num_layers,
+                                num_attn_heads=args.aggregator_num_attn_heads)
         # Inference path: everything fp16, matching Model.load_pretrained(..., dtype=fp16).
         # (Training keeps the VAE fp32 because autocast handles the aggregator/UNet dtypes;
         # here there is no autocast, so a mixed fp32-params/fp16-input graph would error.)
@@ -179,7 +236,7 @@ def main():
                                device=features.device)
             return features[:, 0], attn
 
-        for variant in [v for v in ('afa', 'e0_in_afa') if v in phases]:
+        for variant in [v for v in ('afa', expert0_variant) if v in phases]:
             Aggregator.forward = _orig if variant == 'afa' else pick_expert0
             vdir = os.path.join(args.out, variant)
             os.makedirs(vdir, exist_ok=True)
@@ -215,7 +272,7 @@ def main():
     os.makedirs(gdir, exist_ok=True)
     for i, (kind, prompt) in enumerate(PROMPTS):
         paths, labels = [], []
-        for v in VARIANTS:
+        for v in variants:
             p = os.path.join(args.out, v, f'{i:02d}_{kind}_{slug(prompt)}.png')
             if os.path.exists(p):
                 paths.append(p); labels.append(v)
@@ -252,7 +309,7 @@ def main():
                        padding=True, truncation=True).to(device)
             tfeat = clip.get_text_features(**txt)
             tfeat = tfeat / tfeat.norm(dim=-1, keepdim=True)
-            for v in VARIANTS:
+            for v in variants:
                 for i, (kind, prompt) in enumerate(PROMPTS):
                     p = os.path.join(args.out, v, f'{i:02d}_{kind}_{slug(prompt)}.png')
                     if not os.path.exists(p):
@@ -264,18 +321,18 @@ def main():
         free(clip)
 
         print('\n=== CLIPScore (x100, higher = better text-image alignment) ===', flush=True)
-        print(f'{"prompt":<52} ' + ' '.join(f'{v:>10}' for v in VARIANTS), flush=True)
+        print(f'{"prompt":<52} ' + ' '.join(f'{v:>10}' for v in variants), flush=True)
         for i, (kind, prompt) in enumerate(PROMPTS):
-            row = [scores.get((v, i)) for v in VARIANTS]
+            row = [scores.get((v, i)) for v in variants]
             print(f'{kind:>5} {prompt[:46]:<46} ' + ' '.join(
                 f'{x:>10.2f}' if x is not None else f'{"-":>10}' for x in row), flush=True)
         print(f'\n{"MEAN":<52} ' + ' '.join(
             f'{np.mean([scores[(v, i)] for i in range(len(PROMPTS)) if (v, i) in scores]):>10.2f}'
-            for v in VARIANTS), flush=True)
-        if ('afa', 0) in scores and ('e0_in_afa', 0) in scores:
-            d = [scores[('afa', i)] - scores[('e0_in_afa', i)] for i in range(len(PROMPTS))
-                 if ('afa', i) in scores and ('e0_in_afa', i) in scores]
-            print(f'afa - e0_in_afa (same model/VAE/text-encoder, isolates the aggregator): '
+            for v in variants), flush=True)
+        if ('afa', 0) in scores and (expert0_variant, 0) in scores:
+            d = [scores[('afa', i)] - scores[(expert0_variant, i)] for i in range(len(PROMPTS))
+                 if ('afa', i) in scores and (expert0_variant, i) in scores]
+            print(f'afa - {expert0_variant} (same VAE/text-encoder, isolates the aggregator): '
                   f'mean={np.mean(d):+.2f}  win/tie/loss='
                   f'{sum(1 for x in d if x > 0.1)}/{sum(1 for x in d if abs(x) <= 0.1)}/'
                   f'{sum(1 for x in d if x < -0.1)}', flush=True)
